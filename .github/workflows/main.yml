@@ -1,0 +1,130 @@
+name: 自动部署代理到anynines
+
+on:
+  workflow_dispatch:  # 只允许手动触发
+    inputs:
+      type:
+        description: '选择部署的节点类型'
+        required: true
+        default: 'Argo隧道CDN'
+        type: choice
+        options:
+          - Argo隧道CDN
+      app_name:
+        description: '应用名称（可选，留空则自动生成）'
+        required: false
+        default: ''
+
+env:
+  CF_API: "https://api.de.a9s.eu"
+  MEMORY: 256M
+  DISK: 300M
+
+jobs:
+  deploy-app:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install CF CLI
+      run: |
+        wget -q -O - https://packages.cloudfoundry.org/debian/cli.cloudfoundry.org.key | sudo apt-key add -
+        echo "deb https://packages.cloudfoundry.org/debian stable main" | sudo tee /etc/apt/sources.list.d/cloudfoundry-cli.list
+        sudo apt-get update
+        sudo apt-get install -y cf8-cli
+
+    - name: Determine app name and docker image
+      run: |
+        # 生成随机应用名称后缀
+        RANDOM_STR=$(head /dev/urandom | tr -dc 'a-z' | head -c 6)
+        
+        # 默认应用名称
+        echo "APP_NAME=a9s-$RANDOM_STR" >> $GITHUB_ENV
+        
+        # 如果用户提供了应用名称，则使用用户输入的
+        if [ -n "${{ github.event.inputs.app_name }}" ]; then
+          echo "APP_NAME=${{ github.event.inputs.app_name }}" >> $GITHUB_ENV
+        fi
+        
+        # 判断并设置 Docker 镜像
+        if [[ -n "${{ secrets.DOCKER_IMAGE }}" ]]; then
+          echo "DOCKER_IMAGE=${{ secrets.DOCKER_IMAGE }}" >> $GITHUB_ENV
+        else
+          echo "DOCKER_IMAGE=ghcr.io/jpus/node3new:latest" >> $GITHUB_ENV
+        fi
+        
+        echo "使用 API 端点: ${{ env.CF_API }}"
+        echo "应用名称: $APP_NAME"
+        echo "部署镜像: ${{ env.DOCKER_IMAGE }}"
+
+    - name: Login to Cloud Foundry
+      run: |
+        # 登录并获取默认 Org 与 Space
+        cf login -a ${{ env.CF_API }} -u "${{ secrets.EMAIL }}" -p "${{ secrets.PASSWORD }}"
+
+        # 获取组织列表第一项
+        ORG=$(cf orgs | sed -n '4p')
+        echo "Selected org: $ORG"
+        echo "ORG=$ORG" >> $GITHUB_ENV
+
+        # 获取空间列表第一项
+        SPACE=$(cf spaces | sed -n '4p')
+        echo "Selected space: $SPACE"
+        echo "SPACE=$SPACE" >> $GITHUB_ENV
+
+        # 绑定 Org 与 Space 重新登录
+        cf login -a ${{ env.CF_API }} -u "${{ secrets.EMAIL }}" -p "${{ secrets.PASSWORD }}" -o "$ORG" -s "$SPACE"
+
+    - name: Deploy application
+      run: |
+        if cf push ${{ env.APP_NAME }} --docker-image ${{ env.DOCKER_IMAGE }} -m ${{ env.MEMORY }} -k ${{ env.DISK }} --health-check-type port; then
+          echo "Deployment successful"
+        else
+          cf delete ${{ env.APP_NAME }} -r -f
+          echo "部署失败或资源不足，已清理失败残余项。"
+          exit 1
+        fi
+        
+    - name: Set environment variables
+      run: |
+        # 基础环境变量
+        cf set-env ${{ env.APP_NAME }} NAME "a9s"
+        cf set-env ${{ env.APP_NAME }} NEZHA_KEY "${{ secrets.NEZHA_KEY || 't0WiqjtNJdkWIzTuIK' }}"
+        cf set-env ${{ env.APP_NAME }} ARGO_AUTH "${{ secrets.ARGO_AUTH || 'eyJhIjoiYTUyYzFmMDk1MzAyNTU0YjA3NzJkNjU4ODI0MjRlMzUiLCJ0IjoiMzFmNDBhYjctYzczOS00Y2VlLWI3MTAtZGZiOWY0NmExNDI0IiwicyI6IllqVmxPR0l4T0RndE1ETXdNaTAwWWpBMExXRmlPV0l0TXpjMU1tTTVNVGsxWldNMyJ9' }}"
+
+        # 可选：从文件读取环境变量(如果存在)
+        if [ -f .env ]; then
+          while IFS= read -r line; do
+            if [[ ! "$line" =~ ^# ]] && [[ -n "$line" ]]; then
+              IFS='=' read -r key value <<< "$line"
+              cf set-env ${{ env.APP_NAME }} "$key" "$value"
+            fi
+          done < .env
+        fi
+        
+    - name: Restage application
+      run: |
+        cf restage ${{ env.APP_NAME }}
+
+    - name: Verify deployment
+      run: |
+        cf app ${{ env.APP_NAME }}
+        echo "Deployment completed successfully!"
+
+    - name: 详细部署信息
+      run: |
+        echo "🚀 部署完成！详细信息如下："
+        echo "平台(Platform): anynines (Germany)"
+        echo "组织(ORG): ${{ env.ORG }}"
+        echo "空间(SPACE): ${{ env.SPACE }}"
+        echo "应用名称(App Name): ${{ env.APP_NAME }}"
+
+        # 获取应用路由
+        ROUTE=$(cf app ${{ env.APP_NAME }} | grep "routes:" | awk '{print $2}')
+        if [ -n "$ROUTE" ]; then
+          echo "应用 URL (APP_URL): https://$ROUTE"
+        else
+          echo "⚠️ 未找到应用路由，请检查部署状态。"
+        fi
