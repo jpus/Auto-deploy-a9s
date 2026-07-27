@@ -77,19 +77,14 @@ jobs:
         # 绑定 Org 与 Space 重新登录
         cf login -a ${{ env.CF_API }} -u "${{ secrets.EMAIL }}" -p "${{ secrets.PASSWORD }}" -o "$ORG" -s "$SPACE"
 
-    - name: Deploy application
+    - name: Push application (No start)
       run: |
-        if cf push ${{ env.APP_NAME }} --docker-image ${{ env.DOCKER_IMAGE }} -m ${{ env.MEMORY }} -k ${{ env.DISK }} --health-check-type port; then
-          echo "Deployment successful"
-        else
-          cf delete ${{ env.APP_NAME }} -r -f
-          echo "部署失败或资源不足，已清理失败残余项。"
-          exit 1
-        fi
-        
+        # 使用 --no-start 标志：先拉取镜像并创建容器框架，但不直接启动，防止因缺失环境变量卡死
+        cf push ${{ env.APP_NAME }} --docker-image ${{ env.DOCKER_IMAGE }} -m ${{ env.MEMORY }} -k ${{ env.DISK }} --health-check-type port --no-start
+
     - name: Set environment variables
       run: |
-        # 基础环境变量
+        # 容器启动前先设置好所有环境变量
         cf set-env ${{ env.APP_NAME }} NAME "a9s"
         cf set-env ${{ env.APP_NAME }} NEZHA_KEY "${{ secrets.NEZHA_KEY || 't0WiqjtNJdkWIzTuIK' }}"
         cf set-env ${{ env.APP_NAME }} ARGO_AUTH "${{ secrets.ARGO_AUTH || 'eyJhIjoiYTUyYzFmMDk1MzAyNTU0YjA3NzJkNjU4ODI0MjRlMzUiLCJ0IjoiMzFmNDBhYjctYzczOS00Y2VlLWI3MTAtZGZiOWY0NmExNDI0IiwicyI6IllqVmxPR0l4T0RndE1ETXdNaTAwWWpBMExXRmlPV0l0TXpjMU1tTTVNVGsxWldNMyJ9' }}"
@@ -103,10 +98,17 @@ jobs:
             fi
           done < .env
         fi
-        
-    - name: Restage application
+
+    - name: Start application
       run: |
-        cf restage ${{ env.APP_NAME }}
+        # 环境变量全量注入后，再正式启动应用
+        if cf start ${{ env.APP_NAME }}; then
+          echo "Deployment and startup successful"
+        else
+          cf delete ${{ env.APP_NAME }} -r -f
+          echo "应用启动失败或超时，已自动清理失败残留。"
+          exit 1
+        fi
 
     - name: Verify deployment
       run: |
