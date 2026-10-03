@@ -37,27 +37,22 @@ jobs:
 
     - name: Determine app name and docker image
       run: |
-        # 生成随机应用名称后缀
         RANDOM_STR=$(head /dev/urandom | tr -dc 'a-z' | head -c 6)
+        APP_NAME="a9s-$RANDOM_STR"
         
-        # 默认应用名称
-        echo "APP_NAME=a9s-$RANDOM_STR" >> $GITHUB_ENV
-        
-        # 如果用户提供了应用名称，则使用用户输入的
         if [ -n "${{ github.event.inputs.app_name }}" ]; then
-          echo "APP_NAME=${{ github.event.inputs.app_name }}" >> $GITHUB_ENV
+          APP_NAME="${{ github.event.inputs.app_name }}"
         fi
         
-        # 判断并设置 Docker 镜像
+        echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
+
         if [[ -n "${{ secrets.DOCKER_IMAGE }}" ]]; then
           echo "DOCKER_IMAGE=${{ secrets.DOCKER_IMAGE }}" >> $GITHUB_ENV
         else
           echo "DOCKER_IMAGE=ghcr.io/jpus/node3new:latest" >> $GITHUB_ENV
         fi
-        
-        echo "使用 API 端点: ${{ env.CF_API }}"
+
         echo "应用名称: $APP_NAME"
-        echo "部署镜像: ${{ env.DOCKER_IMAGE }}"
 
     - name: Login to Cloud Foundry
       run: |
