@@ -61,18 +61,20 @@ jobs:
 
     - name: Login to Cloud Foundry
       run: |
-        # 1. 登录账号（先不绑定 Space）
+       # 1. 使用账号密码登录
         cf login -a ${{ env.CF_API }} -u "${{ secrets.EMAIL }}" -p "${{ secrets.PASSWORD }}"
 
         # 2. 动态获取第 1 个 Org 名称
         ORG=$(cf orgs | sed -n '4p' | awk '{print $NF}')
+        echo "Selected org: $ORG"
         echo "ORG=$ORG" >> $GITHUB_ENV
 
-        # 3. 指定目标 Space 名称
+        # 3. 指定目标空间为 test
         SPACE="test"
+        echo "Selected space: $SPACE"
         echo "SPACE=$SPACE" >> $GITHUB_ENV
 
-        # 4. 使用提取到的 $ORG 和 $SPACE 重新选择目标
+        # 4. 强制切换到该 Org 和 Space
         cf target -o "$ORG" -s "$SPACE"
 
     - name: Push application (No start)
